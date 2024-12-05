@@ -170,21 +170,8 @@ impl EfficientNetConfig {
                     Some(global.drop_connect_rate * block_idx as f64 / block_len)
             });
 
-        let feature_idxs = feature_idxs.unwrap_or_else(|| {
-            let cumulative_num_block: Vec<usize> = block_repeats
-                .iter()
-                .scan(0, |acc, curr| {
-                    *acc += curr;
-                    Some(*acc)
-                })
-                .collect();
-            vec![
-                cumulative_num_block[1],
-                cumulative_num_block[2],
-                cumulative_num_block[4],
-                cumulative_num_block[6],
-            ]
-        });
+        let feature_idxs = feature_idxs.unwrap_or_else(|| Self::calc_feature_idxs(&block_repeats));
+
 
         // Head
         let head_out = global.round_filters(1280);
@@ -198,6 +185,22 @@ impl EfficientNetConfig {
 
             feature_idxs,
         }
+    }
+
+    fn calc_feature_idxs(block_repeats: &[usize]) -> Vec<usize> {
+        let cumulative_num_block: Vec<usize> = block_repeats
+            .iter()
+            .scan(0, |acc, curr| {
+                *acc += curr;
+                Some(*acc)
+            })
+            .collect();
+        vec![
+            cumulative_num_block[1] - 1,
+            cumulative_num_block[2] - 1,
+            cumulative_num_block[4] - 1,
+            cumulative_num_block[6] - 1,
+        ]
     }
 }
 
@@ -267,5 +270,67 @@ impl<B: Backend> EncoderConfig<B> for EfficientNetConfig {
             bn1,
             avg_pooling,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_round_filters() {
+        let config = EfficientNetGlobalConfig {
+            width_coefficient: Some(1.0),
+            depth_coefficient: Some(1.0),
+            image_size: Some(224),
+            dropout_rate: 0.2,
+            num_classes: 1000,
+            batch_norm_momentum: 0.1,
+            batch_norm_epsilon: 1e-3,
+            drop_connect_rate: 0.2,
+            depth_divisor: 8,
+            min_depth: Some(8),
+            include_top: true,
+        };
+
+        assert_eq!(config.round_filters(32), 32);
+        assert_eq!(config.round_filters(33), 40);
+    }
+
+    #[test]
+    fn test_round_repeats() {
+        let config = EfficientNetGlobalConfig {
+            width_coefficient: Some(1.0),
+            depth_coefficient: Some(1.2),
+            image_size: Some(224),
+            dropout_rate: 0.2,
+            num_classes: 1000,
+            batch_norm_momentum: 0.1,
+            batch_norm_epsilon: 1e-3,
+            drop_connect_rate: 0.2,
+            depth_divisor: 8,
+            min_depth: Some(8),
+            include_top: true,
+        };
+
+        assert_eq!(config.round_repeats(3), 4);
+        assert_eq!(config.round_repeats(1), 2);
+    }
+
+    #[test]
+    fn test_calc_feature_idxs() {
+        // feature_idxs here are 0-based, whereas in the segmentation-models-pytorch implementation they are 1-based.
+        // Therefore, the indices are 1 less than the ones in the original implementation.
+
+        // B0
+        assert_eq!(
+            EfficientNetConfig::calc_feature_idxs(&[1, 2, 2, 3, 3, 4, 1,]),
+            vec![2, 4, 10, 15]
+        );
+        // B2
+        assert_eq!(
+            EfficientNetConfig::calc_feature_idxs(&[2, 3, 3, 4, 4, 5, 2]),
+            vec![4, 7, 15, 22]
+        );
     }
 }
